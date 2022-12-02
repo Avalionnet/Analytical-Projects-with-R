@@ -1,0 +1,136 @@
+---
+title: "DBA3702 Assignment 4"
+output: html_document
+date: "10 Sept 2021"
+---
+# Question 1
+
+
+
+# Question 2
+
+### Function to validate if input sequence is in the right format
+
+```{r}
+# Based on the format covered during our lecture, a sequence of the correct format should
+# 1. Only contain "F" "M" and "," characters
+# 2. Should not contain any white-space
+# 3. Should be delimited by ","
+# 4. Should have odd number of characters (derived constraint)
+seqChecker <- function(seq) {
+  
+  # Check if sequence has an odd number of characters --> return false if even
+  if(nchar(seq) %% 2 == 0) {
+    return(FALSE)
+  }
+  # Check if last character is not "M" or "F"
+  if(substr(seq, nchar(seq),nchar(seq)) != "F" & substr(seq, nchar(seq),nchar(seq)) != "M") {
+    return(FALSE)
+  }
+  # Split the seq by its delimiter
+  seq_split <- strsplit(seq, ",")[[1]]
+  if(length(seq_split < 3)) {
+    return(FALSE)
+  }
+  
+  # Check if split vector contains any element besides M and F
+  if(length(seq_split[seq_split %in% c("F", "M")]) != length(seq_split)) {
+    return(FALSE)
+  }
+  return(TRUE)
+}
+```
+
+### Functions handlers for all error patterns identified in the column.
+#### The following cases should be considered:
+1. Differences in Capitalization
+1. F / M represented as Female / Male
+1. Extra white-spaces btw delimiters
+1. Invalid characters (i.e. <)
+1. Empty Sequences
+1. Wrong spelling
+1. Missing delimiters
+
+```{r}
+# Handler to capitalize all chars in the sequence provided
+capsHandler <- function(seq) {
+  return(toupper(seq))
+}
+# Handler to replace all instances of Female/Male with shorthands F/M
+shortformHandler <- function(seq) {
+  result <- gsub("MALE", "M", seq)
+  return(gsub("FEM", "F", result))
+}
+
+# Handler to remove all chars not upper case letters or isn't a comma (spaces are also removed)
+specialCharHandler <- function(seq) {
+  return(gsub("[^[:upper:]\\,]", "", seq))
+}
+
+# Handler to recombine vector of chars into string
+strRecombineHandler <- function(seqVector) {
+  stringStore <- ""
+  needComma <- FALSE
+  for(char in seqVector) {
+    if(!needComma && char != ",") {
+      stringStore <- paste(stringStore, char, sep = "")
+      needComma <- TRUE  
+    } else if(needComma && char == ",") {
+        stringStore <- paste(stringStore, char, sep = "")
+        needComma <- FALSE 
+    } else if(!needComma && char == ",") {
+        # Ignore the extra comma
+    } else {
+        stringStore <- paste(stringStore, ",", char, sep ="")
+        needComma <- TRUE
+    }
+  }
+  return(stringStore)
+}
+# Handler for special cases such as spelling errors
+spellingErrorHandler <- function(seq){
+  if(seq == "famale") {
+    return("F")
+  }
+}
+
+```
+
+Now, it's time to put all the handlers into action and clean the column:
+**(Rows with less than 3 data points in the gender sequence are removed as they are insufficient for analysis according to prof during lecture)**
+
+```{r}
+
+raw.data <- read.csv("The family with the largest number of children.csv", fileEncoding = "UTF-8-BOM")
+clean.data <- raw.data
+emptyRows <- c() 
+
+for(rowNum in 1:nrow(clean.data)) {
+  seq <- clean.data[rowNum, "Gender.Sequence"]
+  # Check if gender sequence is empty
+  if (seq == "") {
+    emptyRows <- c(emptyRows, rowNum)
+  } else {
+      # If sequence fails validation, handle with handlers
+      if(!seqChecker(seq)) {
+        tempSeq <- capsHandler(seq)
+        tempSeq <- shortformHandler(tempSeq)
+        tempSeq <- specialCharHandler(tempSeq)
+        tempSeqSplit <- strsplit(tempSeq, "")[[1]]
+        if(length(tempSeqSplit[tempSeqSplit %in% c("F", "M", ",")]) != length(tempSeqSplit)) {
+          tempSeq <- spellingErrorHandler(seq)
+        } else {
+          tempSeq <- strRecombineHandler(tempSeqSplit)
+        }
+        # Removes rows with gender sequence of less than 3 data points
+        if(nchar(tempSeq) < 5) {
+            emptyRows <- c(emptyRows, rowNum)
+        }
+        clean.data[rowNum, "Gender.Sequence"] <- tempSeq
+      }
+  }
+}
+# Rows with empty gender seq are removed (eg. row 76 in raw data)
+clean.data <- clean.data[-emptyRows,]
+clean.data
+```

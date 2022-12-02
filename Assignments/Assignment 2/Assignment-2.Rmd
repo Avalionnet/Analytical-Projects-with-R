@@ -1,0 +1,107 @@
+---
+title: "DBA3702 Assignment 2"
+output: html_document
+date: "26 August 2021"
+
+---
+# Question 1
+
+```{r}
+
+# Remove all rows with empty second cols
+raw.data <- read.csv("./Univ Education.csv", stringsAsFactors = F)
+colnames(raw.data) <- 1:ncol(raw.data)
+data.clean <- raw.data[raw.data[[2]] != "" & raw.data[[2]] != " " & (grepl("Males:", raw.data$"1") | grepl("Females:", raw.data$"1") | grepl("Variables", raw.data$"1")),]
+
+# Set new header
+names(data.clean) <- data.clean[1,]
+data.clean <- data.clean[-1,]
+# To validate if data is appropriately cleaned
+# nrow(data.clean)
+
+print(data.clean)
+
+```
+# Question 2
+
+```{r}
+library("stringr")
+library("dplyr")
+library("tidyr")
+
+# Add Gender and Major columns to data frame
+data.clean$Gender <- ifelse(grepl("Males", data.clean$` Variables `), "Males", ifelse(grepl("Females", data.clean$` Variables `), "Females", "na"))
+
+data.clean$Major <- str_remove(data.clean$` Variables `, "Males: ")
+data.clean$Major <- str_remove(data.clean$Major, "Females: ")
+data.clean$Major <- str_trim(data.clean$Major)
+
+data.clean <- gather(data.clean, "Year", "Count", -` Variables `,-Gender, -Major)
+
+df <- data.frame(Year = data.clean$Year, Gender = data.clean$Gender, Major = data.clean$Major, Count = data.clean$Count)
+
+df$Count <- gsub(",","",df$Count)
+df$Count <- gsub("na",0,df$Count)
+df <- transform(df, Count = as.integer(Count))
+dfWithoutOthers <- df
+
+# Accounting for graduates whose major cannot be classified in any of the major categories provided in 2017
+maleTotal_2017 <-  as.integer(gsub(",","", raw.data[5,26]))
+femaleTotal_2017 <-  as.integer(gsub(",","", raw.data[21,26]))
+prelimAggregate <- aggregate(Count~Gender+Year, df, sum)
+maleOther2017 <- maleTotal_2017 - prelimAggregate[50, "Count"]
+femaleOther2017 <- femaleTotal_2017 - prelimAggregate[49, "Count"]
+
+# Adding these graduates under the "Others" category for the year 2017
+df <- add_row(df, Year = "2017", Gender = "Males", Major = "Others", Count = maleOther2017)
+df <- add_row(df, Year = "2017", Gender = "Females", Major = "Others", Count = femaleOther2017)
+
+print(df)
+```
+
+# Question 3
+
+***There is a higher number of female graduates than male graduates in total across all majors from 1993-2017***
+
+- Total number of male graduates: 140,794
+- Total number of female graduates: 146,150
+
+**For data excluding 2017 graduates whose main field of study is not classifiable under one of the majors**
+
+- Total number of male graduates: 140,783
+- Total number of female graduates: 146,115
+
+```{r}
+# Inclusive of all graduates
+aggregate(Count~Gender, df, sum)
+# Excluding 2017 graduates whose main field of study is not classifiable under one of the majors
+aggregate(Count~Gender, dfWithoutOthers, sum)
+
+```
+# Question 4
+
+***2017 has the largest number of dentistry graduates***
+```{r}
+
+dentistry <- aggregate(Count~Major+Year, df, sum)
+dentistry <- dentistry %>% subset(Major == "Dentistry")
+dentistry[which.max(dentistry$Count),]
+
+```
+# Question 5
+
+***Most favourable major for Females from 1993-2017:***<br>
+
+- 1993 - 2003 -> Humanities & Social Sciences
+- 2004 - 2008 -> Engineering Sciences
+- 2009 - 2017 -> Humanities & Social Sciences
+
+```{r}
+
+trend <- subset(df, Gender =="Females") %>% group_by(Year) %>% top_n(1, Count)
+print(trend)
+```
+
+
+
+

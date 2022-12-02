@@ -1,0 +1,736 @@
+---
+title: "Assignment 6"
+date: "10/17/2021"
+output: html_notebook
+---
+
+# Assignment Question
+
+`Load Flights.csv, Airlines.csv, Airports.csv from LumiNUS. 
+Run the codes shared in class to construct columns: SCHEDULED_DEPARTURE_TIME, ACTUAL_DEPARTURE_TIME, WHEELS_OFF_TIME, WHEELS_ON_TIME, SCHEDULED_ARRIVAL_TIME, ACTUAL_ARRIVAL_TIME.
+
+(1)	Clean whatever flight problem you may identify.
+(2)	develop proper visualization to answer the following questions:
+         Which airline to choose or avoid when travelling?
+         Which airport to choose or avoid when travelling?
+         What is the seasonal effect on flight performance?
+         How to visualise the flight on map?
+         
+You may ask your own question and produce insightful visualisation to address it. `
+
+
+# Data Cleaning
+
+```{r}
+library(dplyr)
+```
+
+```{r}
+flights <- read.csv("flights.csv")
+airports <- read.csv("airports.csv")
+airlines <- read.csv("airlines.csv")
+```
+
+
+```{r}
+#prof's code
+flights$date <- paste(flights$YEAR,flights$MONTH,flights$DAY,sep = "-")
+
+flights$SCHEDULED_DEPARTURE1 <- substr(as.POSIXct(sprintf("%04.0f", flights$SCHEDULED_DEPARTURE), format='%H%M'), 12, 19)
+flights$SCHEDULED_DEPARTURE_TIME <- strptime(paste(flights$date,flights$SCHEDULED_DEPARTURE1),format='%Y-%m-%d %H:%M:%S')
+
+flights$DEPARTURE_TIME1 <- substr(as.POSIXct(sprintf("%04.0f", flights$DEPARTURE_TIME), format='%H%M'), 12, 19)
+flights$ACTUAL_DEPARTURE_TIME <- strptime(paste(flights$date,flights$DEPARTURE_TIME1),format='%Y-%m-%d %H:%M:%S')
+
+flights$WHEELS_OFF1 <- substr(as.POSIXct(sprintf("%04.0f", flights$WHEELS_OFF), format='%H%M'), 12, 19)
+flights$WHEELS_OFF_TIME <- strptime(paste(flights$date,flights$WHEELS_OFF1),format='%Y-%m-%d %H:%M:%S')
+
+flights$WHEELS_ON1 <- substr(as.POSIXct(sprintf("%04.0f", flights$WHEELS_ON), format='%H%M'), 12, 19)
+flights$WHEELS_ON_TIME <-  strptime(paste(flights$date,flights$WHEELS_ON1),format='%Y-%m-%d %H:%M:%S')
+
+flights$SCHEDULED_ARRIVAL1 <- substr(as.POSIXct(sprintf("%04.0f", flights$SCHEDULED_ARRIVAL), format='%H%M'), 12, 19)
+flights$SCHEDULED_ARRIVAL_TIME <- strptime(paste(flights$date,flights$SCHEDULED_ARRIVAL1),format='%Y-%m-%d %H:%M:%S')
+
+flights$ARRIVAL_TIME1 <- substr(as.POSIXct(sprintf("%04.0f", flights$ARRIVAL_TIME), format='%H%M'), 12, 19)
+flights$ACTUAL_ARRIVAL_TIME <- strptime(paste(flights$date,flights$ARRIVAL_TIME1),format='%Y-%m-%d %H:%M:%S')
+```
+
+# Cleaning flights problem we identifed.
+```{r}
+#cleaning instructions from email
+flights$WHEELS_ON_TIME <- flights$WHEELS_OFF_TIME + as.difftime(flights$AIR_TIME, units="mins")
+flights$ACTUAL_ARRIVAL_TIME <- flights$WHEELS_ON_TIME + as.difftime(flights$TAXI_IN, units="mins")
+```
+
+```{r}
+#change NA to 0 in delay columns (if applicable)
+
+flights$AIR_SYSTEM_DELAY <- ifelse(is.na(flights$AIR_SYSTEM_DELAY), ifelse(flights$ARRIVAL_DELAY <= 0 & flights$CANCELLED != 1, 0, NA), flights$AIR_SYSTEM_DELAY)
+
+flights$SECURITY_DELAY <- ifelse(is.na(flights$SECURITY_DELAY), ifelse(flights$ARRIVAL_DELAY <= 0 & flights$CANCELLED != 1, 0, NA), flights$SECURITY_DELAY)
+
+flights$AIRLINE_DELAY <- ifelse(is.na(flights$AIRLINE_DELAY), ifelse(flights$ARRIVAL_DELAY <= 0 & flights$CANCELLED != 1, 0, NA), flights$AIRLINE_DELAY)
+
+flights$LATE_AIRCRAFT_DELAY <- ifelse(is.na(flights$LATE_AIRCRAFT_DELAY), ifelse(flights$ARRIVAL_DELAY <= 0 & flights$CANCELLED != 1, 0, NA), flights$LATE_AIRCRAFT_DELAY)
+
+flights$WEATHER_DELAY <- ifelse(is.na(flights$WEATHER_DELAY), ifelse(flights$ARRIVAL_DELAY <= 0 & flights$CANCELLED != 1, 0, NA), flights$WEATHER_DELAY)
+```
+
+```{r}
+#fix logical errors 
+
+for (i in 1:nrow(flights)){
+  if (!is.na(flights$WHEELS_OFF_TIME[i]) & !is.na(flights$ACTUAL_DEPARTURE_TIME[i])){  
+    if (flights$ACTUAL_DEPARTURE_TIME[i] > flights$WHEELS_OFF_TIME[i]){
+      flights$WHEELS_OFF_TIME[i] <- flights$ACTUAL_DEPARTURE_TIME[i] + as.difftime(1, units="days")
+    }
+  }
+  
+  if (!is.na(flights$WHEELS_OFF_TIME[i]) & !is.na(flights$WHEELS_ON_TIME[i])){
+    if (flights$WHEELS_OFF_TIME[i] > flights$WHEELS_ON_TIME[i]){
+        flights$WHEELS_ON_TIME[i] <- flights$WHEELS_ON_TIME[i] + as.difftime(1, units="days")
+    } 
+  }
+  
+  if (!is.na(flights$ACTUAL_ARRIVAL_TIME[i]) & !is.na(flights$WHEELS_ON_TIME[i])){
+    if (flights$WHEELS_ON_TIME[i] > flights$ACTUAL_ARRIVAL_TIME[i]){
+        flights$ACTUAL_ARRIVAL_TIME[i] <- flights$ACTUAL_ARRIVAL_TIME[i] + as.difftime(1, units="days")
+    } 
+  }  
+}
+```
+
+
+# Merging the data together for airlines:
+```{r}
+names(flights)[names(flights) == "AIRLINE"] <- "IATA_CODE"
+flights <- merge(flights, airlines, by="IATA_CODE", all=T)
+```
+
+# Q1:Which airline to choose or avoid when travelling?
+### To make a more informed decision on which airline to choose or avoid, we decided to base our analysis on several factors:
+
+#### Part 1: Here are the factors used to decide which airline to choose and avoid:
+- A potential traveler would prefer airlines with lesser delays (ie. which airline to choose for longer length and shorter length flights)
+- Given the distance travelled by the airline will also affect the impact of airport on the delays, we gauge the performance of the airline based on the average distance travelled by the airline.
+- Comparing between the two variable, we choose the airlines that perform better and worse for shorter length flight and longer length flight separately.
+
+#### Part 2: Here are the factors used to decide which aircraft from each airline to avoid:
+- Similar to Part 1, a potential traveler would prefer aircraft from each airlines with lesser delays (ie. which aircraft to choose for longer length and shorter length flights)
+- Given the distance travelled by the airline will also affect the impact of airport on the delays, we gauge the performance of the aircrafts based on the average distance travelled by the airline.
+- Comparing between the two variable, we choose the aircrafts from each airline that perform better and worse for shorter length flight and longer length flight separately.
+
+#### Part 3: Here are the factors used to decide which airline to choose and avoid based on different criteria:
+
+#### Option 3A (If emphasis is placed on cancellation):
+- A reasonable traveler will attempt to avoid airlines with a high frequency of cancellation.
+- To do so, we will be comparing the percentage of cancellation of the total flights for each airline
+
+#### Option 3B (If emphasis is placed on diversion):
+- A reasonable traveler will attempt to avoid airlines with a high frequency of diverted flights.
+- To do so, we will be comparing the percentage of diverted flights of the total flights for each airline
+
+#### Option 3C (If emphasis is placed on number of destination and flights occuring per day):
+- A reasonable traveler may attempt to choose airlines with a variety of destination and higher frequency of flights per day, since if rescheduling is required, the traveller will be able to choose an alternative more easily.
+- To do so, we will be comparing the number of destinations travelled with the number of flights flown per day
+
+## Part 1:
+```{r}
+#Airline inclination based on delay
+library(ggplot2)
+library(stringr)
+flights.uncancelled <- flights[flights$CANCELLED == 0,]
+flights.airline.delay <- flights.uncancelled %>% group_by(AIRLINE) %>% summarise(avg_delay = mean(AIRLINE_DELAY))
+flights.airline.delay <- flights.airline.delay[order(flights.airline.delay$avg_delay),]
+
+flights.distance <- flights.uncancelled %>% group_by(AIRLINE) %>% summarise(avg_distance = mean(DISTANCE))
+
+ggplot() + geom_point(data=flights.airline.delay, aes(x=reorder(AIRLINE, avg_delay), y=avg_delay), color="black") + geom_bar(data=flights.distance, aes(x=AIRLINE, y=avg_distance/750), stat="identity",fill = "red") + scale_x_discrete(name="Airline",labels = function(x) str_wrap(x, width = 12)) + theme(axis.text.x = element_text(angle =90, vjust = 0.5, hjust=1, size=7)) +scale_y_continuous(name = 'Average Airline Delay', sec.axis = sec_axis(~. *750,name = "Average Distance")) + theme(axis.line.y.right = element_line(color = "red"), axis.ticks.y.right = element_line(color = "red"), axis.text.y.right = element_text(color = "red"))
+```
+
+## Part 1 Conclusion: Choose Hawaiian Airlines for shorter length flights, and Alaska Airlines for longer length flights. Avoid American Eagles, Spirit Air Lines, Jetblue Airways, United Air Lines and Frontier Airlines.
+
+### Based on the results from the graph, 
+- We have identified Hawaiian Airlines for shorter length flights, since it has the lowest average airline delay given the average distance travelled, and Alaska Airlines for longer length flights, since it has the lowest average airline delay for its average distance travelled.
+- We would also avoid American Eagle for short flights and all airlines to the right of American Eagle in the graph for longer flights.
+
+## Part 2:
+```{r}
+flights.aircraft.delay <- flights.uncancelled %>% group_by(AIRLINE) %>% summarise(avg_delay = mean(LATE_AIRCRAFT_DELAY))
+flights.aircraft.delay <- flights.aircraft.delay[order(flights.aircraft.delay$avg_delay),]
+
+ggplot() + geom_point(data=flights.aircraft.delay, aes(x=reorder(AIRLINE, avg_delay), y=avg_delay), color="black") + geom_bar(data=flights.distance, aes(x=AIRLINE, y=avg_distance/750), stat="identity", fill="red") + scale_x_discrete(name="Airline",labels = function(x) str_wrap(x, width = 12)) + theme(axis.text.x = element_text(angle =90, vjust = 0.5, hjust=1, size=7)) +scale_y_continuous(name = 'Average Aircraft Delay', sec.axis = sec_axis(~. *750,name = "Average Distance"))+theme(axis.line.y.right = element_line(color = "red"), axis.ticks.y.right = element_line(color = "red"), axis.text.y.right = element_text(color = "red"))
+```
+## Part 2 Conclusion: Choose Hawaiian Airlines for shorter length flights, and Alaska Airlines for longer length flights. Avoid American Eagles for shorter flights and United Air Lines for longer flights
+
+### Based on the results from the graph, 
+- We have identified Hawaiian Airlines for shorter length flights, since it has the lowest average aircraft delay given the average distance travelled, and Alaska Airlines for longer length flights, since it has the lowest average aircraft delay for its average distance travelled.
+- We would also avoid American Eagle for shorter flights and United Air Lines for longer flights.
+
+## Part 3:
+
+## Part 3A:
+```{r}
+airline_cancel <- flights %>% group_by(AIRLINE) %>% summarise(CANCELLED)
+
+airline_cancel <- airline_cancel %>% count(CANCELLED == 1) %>% group_by(AIRLINE) %>% mutate(flights = sum(n)) %>% mutate(percentage_cancelled = (n/flights)*100) %>% filter(`CANCELLED == 1` == T)
+ 
+ggplot(airline_cancel, aes(AIRLINE, percentage_cancelled)) + geom_col() + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2)) 
+```
+## Part 3A Conclusion: Avoid American Airlines (if emphasis is placed on cancellation)
+
+#### Based on the above charts, 
+- We have identified American Airlines as the option to avoid if the traveller's main concern is cancellation. 
+- American Airlines has the highest percentage of cancellation
+
+## Part 3B:
+```{r}
+diverted <- flights %>% group_by(AIRLINE) %>% summarise(DIVERTED)
+diverted <- diverted %>% count(DIVERTED == 1) %>% group_by(AIRLINE) %>% mutate(flights = sum(n)) %>% mutate(percentage_diverted = (n/flights)*100) %>% filter(`DIVERTED == 1` == T)
+
+ggplot(diverted, aes(AIRLINE, percentage_diverted)) + geom_col() + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2)) 
+```
+## Part 3B Conclusion: Avoid Atlantic Southeast Airlines (if emphasis is placed on diversion)
+
+#### Based on the above charts, 
+- We have identified Atlantic Southeast Airlines as the option to avoid if the traveller's main concern is for diverted flights. 
+- Atlantic Southeast Airlines has the highest percentage of diversion
+
+## Part 3C:
+```{r}
+daily <- flights[,c("date","AIRLINE")]
+daily <- daily %>% group_by(AIRLINE,date) %>% mutate(count = n()) %>% arrange(date, AIRLINE) %>% summarise_all(last)
+daily$date <- as.POSIXct(daily$date,format="%Y-%m-%d")
+
+desti <- flights[,c("date","AIRLINE", "DESTINATION_AIRPORT")]
+desti <- desti %>% group_by(date, AIRLINE) %>% arrange(AIRLINE) %>% distinct(DESTINATION_AIRPORT, .keep_all = T) %>% count('DESTINATION_AIRPORT') %>% group_by(AIRLINE) %>% mutate(mean = mean(n)) %>% summarise_all(first)
+
+ggplot() + geom_point(data=desti,aes(x=AIRLINE, y = mean)) + theme_bw() + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2))
+```
+
+```{r}
+
+ggplot() + geom_boxplot(data=daily, aes(x=AIRLINE, y=count)) + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2))
+# mean no. of destinations a day (dot) compared with the no. of flights a day (line)
+```
+## Part 3C Conclusion: Choose Southwest Airlines (if emphasis is placed on diversion)
+#### Based on the above charts, 
+- We have identified Southwest Airlines as the option to choose if the traveller's main concern is on flexibility of alternative is desired
+- Southwest Airlines has the highest number of destination and number of flights daily
+
+
+
+# Q2:Which airport to choose or avoid when travelling?
+### To make a more informed decision on which airport to choose or avoid, we decided to base our analysis on several factors:
+
+#### Part 1: Here are the factors used to decide which airport to choose:
+- A potential traveler would prefer airports with more flight connections (ie. the number of destination airports that can be reached from the origin airport via a non-stop flight. )
+- Avoid airports that are too crowded/ busy
+- To strike a balance between the 2 factors above, we decided to choose an airport within the `Top 10 airports with the most flight connections` that isn't in the `Top 10 airports with the most outbound flights`
+
+#### Part 2: Here are the factors used to decide which airport to avoid:
+
+#### Option 2A (If emphasis is placed on security):
+- A reasonable traveler will attempt to avoid airports with a high frequency of security delay and high average duration for said delay
+- To do so, we will be comparing the `Top 10 airports with the highest frequency of security delay` and the `Top 10 airports with the highest average security delay`
+
+#### Option 2B (If emphasis is placed on airport delays):
+- A reasonable traveler will attempt to avoid airports with a high frequency of air-system delay and high average duration for said delay
+- To do so, we will be comparing the `Top 10 airports with the highest frequency of air system delay` and the `Top 10 airports with the highest average air system delay`
+
+
+## Part 1:
+```{r, fig.width=6,fig.height=10}
+
+library(ggplot2)
+library(ggmap)
+library(conflicted)
+conflict_prefer("select", "dplyr")
+conflict_prefer("filter", "dplyr")
+
+# Finding airports with the highest number of outbound flights
+
+numFlights <- flights %>% select(YEAR, MONTH, DAY, ORIGIN_AIRPORT, DESTINATION_AIRPORT)
+numFlights <- numFlights %>% group_by(YEAR, MONTH, DAY, ORIGIN_AIRPORT) %>% summarise(outboundFlights = n())
+numFlights <- numFlights %>% group_by(ORIGIN_AIRPORT) %>% summarise(avg.outboundFlights = round(mean(outboundFlights)))
+
+topOutboundAirports <- numFlights[304:625,]
+topOutboundAirports <- inner_join(topOutboundAirports, airports, by = c("ORIGIN_AIRPORT" = "IATA_CODE"))
+topOutboundAirportsByRoutes <- topOutboundAirports %>% arrange(desc(avg.outboundFlights)) %>% slice(1:10)
+
+```
+
+## Top 10 airports with the highest number of outbound flights
+```{r, fig.width=6,fig.height=10}
+topOutboundAirportsByRoutes
+
+outboundTopPlot <- ggplot(data=topOutboundAirportsByRoutes, aes(x=AIRPORT, y=avg.outboundFlights, fill=STATE)) + geom_bar(stat='identity') + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2)) 
+
+print(outboundTopPlot + labs(title ="Top 10 airports with the highest number of outbound flights"))
+
+```
+
+```{r, fig.width=6,fig.height=10}
+# Finding airports with the most number of flight connections 
+
+numFlightsCon <- flights %>% select(YEAR, MONTH, DAY, ORIGIN_AIRPORT, DESTINATION_AIRPORT) %>% distinct()
+numFlightsCon <- numFlightsCon %>% group_by(YEAR, MONTH, DAY, ORIGIN_AIRPORT) %>% summarise(outboundRoutes = n())
+numFlightsCon <- numFlightsCon %>% group_by(ORIGIN_AIRPORT) %>% summarise(avg.outboundRoutes = round(mean(outboundRoutes)))
+
+AirportsWithMostRoutes <- numFlightsCon[304:625,]
+AirportsWithMostRoutes <- inner_join(AirportsWithMostRoutes, airports, by = c("ORIGIN_AIRPORT" = "IATA_CODE"))
+topAirportsWithMostRoutes <- AirportsWithMostRoutes %>% arrange(desc(avg.outboundRoutes)) %>% slice(1:10)
+
+```
+
+
+## Top 10 airports with the highest number of flight connections
+```{r, fig.width=6,fig.height=10}
+
+topAirportsWithMostRoutes
+
+routesTopPlot <- ggplot(data=topAirportsWithMostRoutes, aes(x=AIRPORT, y=avg.outboundRoutes, fill=STATE)) + geom_bar(stat='identity') + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2))
+
+print(routesTopPlot + labs(title ="Top 10 airports with the highest number of flight connections"))
+
+# topOutboundAirportsByState <- topOutboundAirports %>% arrange(desc(avg.outboundFlights)) %>% group_by(STATE) %>% slice(1)
+
+```
+## Part 1 Conclusion: Choose Minneapolis-Saint Paul International Airport
+
+### Based on the results from the 2 charts above, 
+- We have identified Minneapolis-Saint Paul International Airport in the state of to be the preferred airport to travel from as it was one of the Top 10 Airports with the most flight connection and yet, not one of the 10 busiest airport based on the average number of outbound flights per day. 
+
+
+## Part 2:
+
+```{r, fig.width=6,fig.height=10}
+
+# Airports with the most route offerings by state
+
+AirportsWithMostRoutesByState <- AirportsWithMostRoutes %>% arrange(desc(avg.outboundRoutes)) %>% group_by(STATE) %>% slice(1)
+AirportsWithMostRoutesByState <- AirportsWithMostRoutesByState[,c("AIRPORT", "CITY", "STATE", "avg.outboundRoutes")]
+
+```
+
+## Airports with the most route offerings by state
+Here's an extra table of the top airport in each state with the most flight connections. As such, if we have more specific profile data on who our potential traveller is and where he/she is from, we will likely recommend these airports based on the state he is currently in.
+
+```{r}
+AirportsWithMostRoutesByState
+```
+
+```{r, fig.width=6,fig.height=10}
+
+# Finding airports with the highest average security delay (in minutes)
+
+secDelay <- na.omit(flights) %>% select(YEAR, MONTH, DAY, ORIGIN_AIRPORT, SECURITY_DELAY)
+secDelay <- secDelay %>% group_by(YEAR, MONTH, DAY, ORIGIN_AIRPORT) %>% summarise(securityDelay = sum(SECURITY_DELAY))
+secDelay <- secDelay %>% group_by(ORIGIN_AIRPORT) %>% summarise(avg.secDelay = round(mean(securityDelay), digits = 3))
+
+AirportsWithSecDelays <- secDelay[304:625,]
+AirportsWithSecDelays <- inner_join(AirportsWithSecDelays, airports, by = c("ORIGIN_AIRPORT" = "IATA_CODE"))
+topAirportsWithSecDelays <- AirportsWithSecDelays %>% arrange(desc(avg.secDelay)) %>% slice(2:11) %>% select(AIRPORT, avg.secDelay, CITY, STATE)
+
+topAirportsWithSecDelays
+
+secDelayTopPlot <- ggplot(data=topAirportsWithSecDelays, aes(x=AIRPORT, y=avg.secDelay, fill=STATE)) + geom_bar(stat='identity') + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2))
+
+print(secDelayTopPlot + labs(title ="Top 10 airports with the highest average security delay (in minutes)"))
+
+```
+
+```{r, fig.width=6,fig.height=10}
+library(imputeTS)
+
+# Finding airports with the highest frequency of security delay (in minutes)
+
+numFlights2 <- flights %>% group_by(ORIGIN_AIRPORT) %>% summarise(numOfFlights = n())
+numFlights2 <- numFlights2[304:625,]
+
+numOfSecDelay <- flights %>% filter(SECURITY_DELAY != 0) %>% group_by(ORIGIN_AIRPORT) %>% summarise(numSecDelays = n())
+numOfSecDelay <- numOfSecDelay[10:87,]  
+
+combinedSecDelay <- merge(numFlights2, numOfSecDelay, by = "ORIGIN_AIRPORT", all.x = TRUE)
+combinedSecDelay$numSecDelays <- na.replace(combinedSecDelay$numSecDelays, fill=0)
+combinedSecDelay <- combinedSecDelay %>% mutate(delayPercentage = formatC((numSecDelays/numOfFlights)*100 , digits=2, format="f")) %>% arrange(desc(delayPercentage))
+
+
+topCombinedSecDelay <- combinedSecDelay %>% slice(2:11) %>% inner_join(airports, by = c("ORIGIN_AIRPORT" = "IATA_CODE"))
+
+secDelayTopFreqPlot <- ggplot(data=topCombinedSecDelay, aes(x=AIRPORT, y=delayPercentage, fill=STATE)) + geom_point(stat='identity') + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2))
+
+print(secDelayTopFreqPlot + labs(title ="Top 10 airports with the highest frequency of security delay (%)"))
+
+```
+
+## Part 2A Conclusion: Avoid Kodiak Airport (if emphasis is placed on security)
+
+#### Based on the above charts, 
+- We have identified Kodiak Airport as the option to avoid if the traveller's main concern lies in the field of security. 
+- Kodiak Airport has the highest frequency of security delays (rank 1) 
+- There were also the highest ranked (rank 4) Airport in the `Top 10 airports with highest security delay (in minutes)` chart that exists in the `Top 10 airports with the highest frequency of security delay` chart.
+- Hence, this allowed us to arrive at our decision of avoiding Kodiak Airport
+
+## Part 2B
+```{r, fig.width=6,fig.height=10}
+
+# Finding airports with the highest average air-system delay (in minutes)
+
+airsysDelay <- na.omit(flights) %>% select(YEAR, MONTH, DAY, ORIGIN_AIRPORT, AIR_SYSTEM_DELAY)
+airsysDelay <- airsysDelay %>% group_by(YEAR, MONTH, DAY, ORIGIN_AIRPORT) %>% summarise(airsysDelay = sum(AIR_SYSTEM_DELAY))
+airsysDelay <- airsysDelay %>% group_by(ORIGIN_AIRPORT) %>% summarise(avg.airsysDelay = round(mean(airsysDelay), digits = 3))
+
+AirportsWithAirSysDelays <- airsysDelay[304:625,]
+AirportsWithAirSysDelays <- inner_join(AirportsWithAirSysDelays, airports, by = c("ORIGIN_AIRPORT" = "IATA_CODE"))
+topAirportsWithAirSysDelays <- AirportsWithAirSysDelays %>% arrange(desc(avg.airsysDelay)) %>% slice(2:11) %>% select(AIRPORT, avg.airsysDelay, CITY, STATE)
+
+topAirportsWithAirSysDelays
+
+airsysDelayTopPlot <- ggplot(data=topAirportsWithAirSysDelays, aes(x=AIRPORT, y=avg.airsysDelay, fill=STATE)) + geom_bar(stat='identity') + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2))
+
+print(airsysDelayTopPlot + labs(title ="Top 10 airports with the highest average air system delay (in minutes)"))
+
+```
+
+```{r, fig.width=6,fig.height=10}
+library(imputeTS)
+
+# Finding airports with the highest frequency of air system delay (in minutes)
+
+numFlights3 <- flights %>% group_by(ORIGIN_AIRPORT) %>% summarise(numOfFlights = n())
+numFlights3 <- numFlights3[304:625,]
+
+numOfAirSysDelay <- flights %>% filter(AIR_SYSTEM_DELAY != 0) %>% group_by(ORIGIN_AIRPORT) %>% summarise(numAirSysDelays = n())
+numOfAirSysDelay <- numOfAirSysDelay[223:538,]
+
+combinedAirSysDelay <- merge(numFlights3, numOfAirSysDelay, by = "ORIGIN_AIRPORT", all.x = TRUE)
+combinedAirSysDelay$numAirSysDelays <- na.replace(combinedAirSysDelay$numAirSysDelays, fill=0)
+combinedAirSysDelay <- combinedAirSysDelay %>% mutate(delayPercentage = formatC((numAirSysDelays/numOfFlights)*100 , digits=2, format="f")) %>% arrange(desc(delayPercentage))
+
+combinedAirSysDelay
+topcombinedAirSysDelay <- combinedAirSysDelay %>% slice(2:11) %>% inner_join(airports, by = c("ORIGIN_AIRPORT" = "IATA_CODE"))
+
+airSysDelayTopFreqPlot <- ggplot(data=topcombinedAirSysDelay, aes(x=AIRPORT, y=delayPercentage, fill=STATE)) + geom_point(stat='identity') + theme(text = element_text(size = 10), axis.text.x = element_text(angle = 90, hjust=0.95,vjust=0.2))
+
+print(airSysDelayTopFreqPlot + labs(title ="Top 10 airports with the highest frequency of air system delay (%)"))
+
+```
+## Part 2B Conclusion: Avoid Corpus Christi International Airport (if emphasis is placed on air sys delay)
+
+#### Based on the above charts, 
+- We have identified Corpus Christi International Airport as the option to avoid if the traveler's main concern lies in the field of air system delay.
+- Since there were no common airports within both charts above, we decided to prioritize the frequency of air system delay in our decision.
+
+# Q3: What is the seasonal effect on flight performance?
+
+#### Part 1: Weekend VS Weekdays
+- A potential traveler might want to know whether it will be better to travel on weekends or weekdays
+- Comparing the cancellation rates on weekends vs weekdays
+- Comparing the delays on weekends vs weekdays
+
+#### Part 2: Between different seasons
+- A reasonable traveler might want to also know which season will be better for travelling.
+- Comparing the cancellation rates in different seasons
+- Comparing the delays in different seasons
+
+#### Part 3: Effects of Holidays
+- A reasonable traveller might want to know the effects of holiday.
+- A reasonable traveler might want to also know which federal holidays will be better for travelling.
+- Comparing the cancellation rates on different federal holidays, where we can observe which holidays are most prone to cancellations to avoid and which holidays to travel on given it has the least cancellations.
+- Comparing the delays on different federal holidays, where we can observe which holidays are most prone to delays to avoid and which holidays to travel on given it has the least delays.
+
+## Part 1: Weekend VS Weekdays
+```{r}
+library(ggplot2)
+library(tidyr)
+```
+
+```{r}
+#Data prep
+weekend_vs_weekday <- flights %>% mutate(is_weekend = ifelse(.$DAY_OF_WEEK > 5, T, F), arrival_delayed = ifelse(.$ARRIVAL_DELAY > 0, T, F), departure_delayed = ifelse(.$DEPARTURE_DELAY > 0, T, F)) %>% filter(!is.na(ARRIVAL_DELAY) & !is.na(DEPARTURE_DELAY)) %>% group_by(is_weekend) %>% summarise(ave_arrival_delay = mean(ARRIVAL_DELAY), proportion_arrival_delay = mean(arrival_delayed), ave_departure_delay = mean(DEPARTURE_DELAY), proportion_departure_delay = mean(departure_delayed))
+```
+
+```{r}
+#Graph 1
+weekend_weekday_prop_cancelled <- flights %>% mutate(is_weekend = ifelse(.$DAY_OF_WEEK > 5, T, F)) %>% group_by(is_weekend) %>% summarise(proportion_cancelled = mean(CANCELLED)) 
+
+ggplot(weekend_weekday_prop_cancelled, aes(is_weekend, proportion_cancelled, fill=is_weekend)) + geom_bar(stat='identity') + ggtitle("Proportion of Cancelled Flights on Weekdays and Weekends") + ylab("Proportion") +xlab("Day") + scale_x_discrete(labels=c("Weekday", "Weekend")) + theme(legend.position="none")
+```
+
+
+```{r}
+#Graph 2
+weekend_weekday_prop_delay <- weekend_vs_weekday %>% select(is_weekend, proportion_arrival_delay, proportion_departure_delay) %>% gather(key="departure_arrival", value="proportion", -1)
+weekend_weekday_prop_delay$departure_arrival <- weekend_weekday_prop_delay$departure_arrival %>% {gsub("proportion_" , "", .)} %>% {gsub("_delay" , "", .)} 
+
+ggplot(data=weekend_weekday_prop_delay, aes(is_weekend, proportion, fill=departure_arrival)) + geom_bar(stat='identity', position='dodge') + ggtitle("Proportion of Delayed Flights on Weekdays and Weekends") + ylab("Proportion") +xlab("Day") + scale_x_discrete(labels=c("Weekday", "Weekend")) +  labs(fill="Arrival or Departure")
+```
+
+```{r}
+#Graph 3
+weekend_weekday_ave_delay <- weekend_vs_weekday %>% select(is_weekend, ave_arrival_delay, ave_departure_delay) %>% gather(key="departure_arrival", value="ave_delay", -1)
+weekend_weekday_ave_delay$departure_arrival <- weekend_weekday_ave_delay$departure_arrival %>% {gsub("ave_" , "", .)} %>% {gsub("_delay" , "", .)} 
+
+ggplot(data=weekend_weekday_ave_delay, aes(is_weekend, ave_delay, fill=departure_arrival)) + geom_bar(stat='identity', position='dodge') + ggtitle("Average Delays in Minutes of Flights on Weekdays and Weekends") + ylab("Delay in Minutes") +xlab("Day") + scale_x_discrete(labels=c("Weekday", "Weekend")) +  labs(fill="Arrival or Departure")
+```
+
+## Part 1 Conclusion: Weekends have more cancelled flights but have lesser delays
+
+#### Based on the above charts, 
+- Travellers should travel on weekends if they do not want to face delays, whereas if cancelled flights is a greater concern, travellers should travel on weekdays
+
+## Part 2: Between different seasons
+```{r}
+#Data prep
+spring <- as.POSIXlt("2015-03-20 00:00:00", format="%Y-%m-%d %H:%M:%S")
+summer <- as.POSIXlt("2015-06-21 00:00:00", format="%Y-%m-%d %H:%M:%S")
+autumn <- as.POSIXlt("2015-09-23 00:00:00", format="%Y-%m-%d %H:%M:%S")
+winter <- as.POSIXlt("2015-12-21 00:00:00", format="%Y-%m-%d %H:%M:%S")
+
+flights$SEASON <- ifelse(flights$SCHEDULED_DEPARTURE_TIME <= winter,
+       ifelse(flights$SCHEDULED_DEPARTURE_TIME <= autumn,
+       ifelse(flights$SCHEDULED_DEPARTURE_TIME <= summer,
+       ifelse(flights$SCHEDULED_DEPARTURE_TIME <= spring, "Spring", "Winter"), "Summer"), "Autumn"), "Winter")
+
+
+seasons <- flights %>% mutate(arrival_delayed = ifelse(.$ARRIVAL_DELAY > 0, T, F), departure_delayed = ifelse(.$DEPARTURE_DELAY > 0, T, F)) %>% filter(!is.na(ARRIVAL_DELAY) & !is.na(DEPARTURE_DELAY)) %>% group_by(SEASON) %>% summarise(ave_arrival_delay = mean(ARRIVAL_DELAY), proportion_arrival_delay = mean(arrival_delayed), ave_departure_delay = mean(DEPARTURE_DELAY), proportion_departure_delay = mean(departure_delayed))
+```
+
+```{r}
+#Graph 1
+seasons_prop_cancelled <- flights %>% group_by(SEASON) %>% summarise(proportion_cancelled = mean(CANCELLED)) 
+
+ggplot(seasons_prop_cancelled, aes(SEASON, proportion_cancelled, fill=SEASON)) + geom_bar(stat='identity') +ggtitle("Proportion of Cancelled Flights by Season") + ylab("Proportion") + xlab("Season") + labs(fill="Season")
+```
+
+```{r}
+#Graph 2
+seasons_prop_delay <- seasons %>% select(SEASON, proportion_arrival_delay, proportion_departure_delay) %>% gather(key="departure_arrival", value="proportion", -1)
+seasons_prop_delay$departure_arrival <- seasons_prop_delay$departure_arrival %>% {gsub("proportion_" , "", .)} %>% {gsub("_delay" , "", .)} 
+
+ggplot(data=seasons_prop_delay, aes(SEASON, proportion, fill=departure_arrival)) + geom_bar(stat='identity', position='dodge') + ggtitle("Proportion of Delayed Flights by Season") + ylab("Proportion") +xlab("Season") + labs(fill="Arrival or Departure")
+```
+
+```{r}
+#Graph 3
+seasons_ave_delay <- seasons %>% select(SEASON, ave_arrival_delay, ave_departure_delay) %>% gather(key="departure_arrival", value="ave_delay", -1)
+seasons_ave_delay$departure_arrival <- seasons_ave_delay$departure_arrival %>% {gsub("proportion_" , "", .)} %>% {gsub("_delay" , "", .)} 
+
+ggplot(data=seasons_ave_delay, aes(SEASON, ave_delay, fill=departure_arrival)) + geom_bar(stat='identity', position='dodge') + ggtitle("Average Delays in Minutes of Flights by Season") + ylab("Delay in Minutes") +xlab("Day") +  labs(fill="Arrival or Departure")
+```
+## Part 2 Conclusion: Autumn is the best season to travel in whereas Spring is the worst.
+
+#### Based on the above charts, 
+- Travellers will experience the least probability of cancellation and delay and even with delays, the duration of average delays are also the least.
+- Whereas while travelling in Spring, travellers have the highest chance of cancellation and delays, with a highest average arrival delay time of all the seasons.
+
+## Part 3: Effects of Holidays
+
+# Holiday vs Not Holiday
+```{r} 
+#Data collection/Data prep
+
+library(XML)
+url <- "https://www.timeanddate.com/holidays/us/2015"
+html <- readLines(url)
+holiday_table <- readHTMLTable(html)[[1]]
+
+federal_holidays <- holiday_table %>% drop_na() %>% filter(V4 == "Federal Holiday") %>% distinct() %>% select(V3, V4)
+colnames(federal_holidays) <- c("Holiday", "Type")
+
+all_holiday_table <- holiday_table %>% drop_na() %>% select(V1, V2, V3) 
+colnames(all_holiday_table) <- c("Holiday_Date", "Day", "Holiday")
+all_holiday_table$Holiday_Date <- all_holiday_table$Holiday_Date %>% paste("2015") %>% as.Date(format="%d %b %Y")
+all_holiday_table <- all_holiday_table %>% distinct()
+
+flights$date <- flights$date %>% as.Date(format="%Y-%m-%d")
+flights <- flights %>% left_join(all_holiday_table, by=c("date" = "Holiday_Date"))
+flights <- flights %>% left_join(federal_holidays) 
+
+federal_holidays <- flights %>% mutate(arrival_delayed = ifelse(.$ARRIVAL_DELAY > 0, T, F), departure_delayed = ifelse(.$DEPARTURE_DELAY > 0, T, F)) %>% filter(!is.na(ARRIVAL_DELAY) & !is.na(DEPARTURE_DELAY) & Type == "Federal Holiday") %>% group_by(Holiday) %>% summarise(ave_arrival_delay = mean(ARRIVAL_DELAY), proportion_arrival_delay = mean(arrival_delayed), ave_departure_delay = mean(DEPARTURE_DELAY), proportion_departure_delay = mean(departure_delayed))
+
+#Data prep
+
+holiday_vs_not <- flights %>% mutate(is_holiday = ifelse(!is.na(.$Holiday), T, F), arrival_delayed = ifelse(.$ARRIVAL_DELAY > 0, T, F), departure_delayed = ifelse(.$DEPARTURE_DELAY > 0, T, F)) %>% filter(!is.na(ARRIVAL_DELAY) & !is.na(DEPARTURE_DELAY)) %>% group_by(is_holiday) %>% summarise(ave_arrival_delay = mean(ARRIVAL_DELAY), proportion_arrival_delay = mean(arrival_delayed), ave_departure_delay = mean(DEPARTURE_DELAY), proportion_departure_delay = mean(departure_delayed))
+
+
+```
+
+
+```{r}
+#Graph 1
+
+holiday_not_prop_cancelled <- flights %>% mutate(is_holiday = ifelse(!is.na(.$Holiday), T, F)) %>% group_by(is_holiday) %>% summarise(proportion_cancelled = mean(CANCELLED)) 
+
+ggplot(holiday_not_prop_cancelled, aes(is_holiday, proportion_cancelled, fill=is_holiday)) + geom_bar(stat='identity') + ggtitle("Proportion of Cancelled Flights on Holidays and Non-Holidays") + ylab("Proportion") +xlab("Day") + scale_x_discrete(labels=c("Non-Holiday", "Holiday")) + theme(legend.position="none")
+```
+
+
+```{r}
+#Graph 2
+
+holiday_not_prop_delay <- holiday_vs_not %>% select(is_holiday, proportion_arrival_delay, proportion_departure_delay) %>% gather(key="departure_arrival", value="proportion", -1)
+holiday_not_prop_delay$departure_arrival <- holiday_not_prop_delay$departure_arrival %>% {gsub("proportion_" , "", .)} %>% {gsub("_delay" , "", .)} 
+
+ggplot(data=holiday_not_prop_delay, aes(is_holiday, proportion, fill=departure_arrival)) + geom_bar(stat='identity', position='dodge')  + ggtitle("Proportion of Delayed Flights on Holidays and Non-Holidays") + ylab("Proportion") +xlab("Day") + scale_x_discrete(labels=c("Non-Holiday", "Holiday")) +  labs(fill="Arrival or Departure")
+```
+
+```{r}
+#Graph 3
+
+holiday_not_ave_delay <- holiday_vs_not %>% select(is_holiday, ave_arrival_delay, ave_departure_delay) %>% gather(key="departure_arrival", value="ave_delay", -1)
+holiday_not_ave_delay$departure_arrival <- holiday_not_ave_delay$departure_arrival %>% {gsub("ave_" , "", .)} %>% {gsub("_delay" , "", .)} 
+
+ggplot(data=holiday_not_ave_delay, aes(is_holiday, ave_delay, fill=departure_arrival)) + geom_bar(stat='identity', position='dodge') + ggtitle("Average Delays in Minutes of Flights on Holidays and Non-Holidays") + ylab("Delay in Minutes") +xlab("Day") + scale_x_discrete(labels=c("Non-Holiday", "Holiday")) +  labs(fill="Arrival or Departure")
+```
+
+## Which holiday?
+```{r}
+library(XML)
+library(stringr)
+```
+
+```{r}
+#Graph 1
+federal_holidays_prop_cancelled <- flights %>% filter(Type == "Federal Holiday") %>% group_by(Holiday) %>% summarise(proportion_cancelled = mean(CANCELLED)) 
+
+ggplot(federal_holidays_prop_cancelled, aes(Holiday, proportion_cancelled, fill=Holiday)) + geom_bar(stat='identity') + scale_x_discrete(labels= function(x) str_wrap(x, width=10)) + theme(axis.text.x= element_text(size=6)) + ggtitle("Proportion of Cancelled Flights on Federal Holidays") + ylab("Proportion") + xlab("Federal Holiday") + labs(fill="Federal Holiday")
+```
+
+```{r}
+#Graph 2
+
+federal_holidays_prop_delay <- federal_holidays %>% select(Holiday, proportion_arrival_delay, proportion_departure_delay) %>% gather(key="departure_arrival", value="proportion", -1)
+federal_holidays_prop_delay$departure_arrival <- federal_holidays_prop_delay$departure_arrival %>% {gsub("proportion_" , "", .)} %>% {gsub("_delay" , "", .)} 
+
+ggplot(data=federal_holidays_prop_delay, aes(Holiday, proportion, fill=departure_arrival)) + geom_bar(stat='identity', position='dodge') + scale_x_discrete(labels= function(x) str_wrap(x, width=10)) + theme(axis.text.x= element_text(size=6)) + ggtitle("Proportion of Delayed Flights on Federal Holidays") + ylab("Proportion") +xlab("Federal Holiday") + labs(fill="Arrival or Departure") 
+```
+
+```{r}
+#Graph 3
+federal_holidays_ave_delay <- federal_holidays %>% select(Holiday, ave_arrival_delay, ave_departure_delay) %>% gather(key="departure_arrival", value="ave_delay", -1)
+federal_holidays_ave_delay$departure_arrival <- federal_holidays_ave_delay$departure_arrival %>% {gsub("ave_" , "", .)} %>% {gsub("_delay" , "", .)}
+
+ggplot(data=federal_holidays_ave_delay, aes(Holiday, ave_delay, fill=departure_arrival)) + geom_bar(stat='identity', position='dodge') + scale_x_discrete(labels= function(x) str_wrap(x, width=10)) + theme(axis.text.x= element_text(size=6)) + ggtitle("Average Delays in Minutes of Flights on Federal Holidays") + ylab("Delay in Minutes") +xlab("Federal Holiday") +  labs(fill="Arrival or Departure") 
+```
+## Part 3 Conclusion: For holidays, avoid travelling on New Year's Day and choose to travel on Labour Day.
+
+#### Based on the above charts, 
+- New Year's Day has the highest cancellation and delay proportion.
+- Labour day has the lowest cancellation rate and has one of the lowest delay rates and average delay
+
+# Question 4: Visualizing data with map
+
+```{r}
+
+library(leaflet)
+library(dplyr)
+library(raster)
+
+# states <- unique(airports[,"STATE"])
+
+# Map of all airports with radius size representing the number of outbound routes offered by the airport
+
+map <- leaflet() %>% addTiles() %>% addCircleMarkers(data = AirportsWithMostRoutes, lat = ~LATITUDE, lng = ~LONGITUDE, popup = ~AIRPORT, radius = ~avg.outboundRoutes, clusterOptions = markerClusterOptions())
+
+map <- addTiles(map,group="Default")
+map <- addProviderTiles(map,"Esri.WorldImagery", group = "Esri")
+map <- addProviderTiles(map,"Stamen.Toner", group = "Toner")
+map <- addProviderTiles(map, "Stamen.TonerLite", group = "Toner Lite")
+map <- addLayersControl(map, baseGroups = c("Default","Esri",
+                                        "Toner Lite","Toner"),
+)
+
+```
+
+## Map of all airports with radius size representing the number of outbound routes offered (Airports offering more flight connections will have a larger radius) 
+
+#### Zoom in to view individual airports
+
+```{r}
+map
+```
+
+```{r}
+library(leaflet.extras)
+
+# Heatmap of airports with intensities based on the percentage of security delays
+options("viewer" = function(url, ...) utils::browseURL(url))
+combinedSecDelay <- combinedSecDelay %>% inner_join(airports, by = c("ORIGIN_AIRPORT" = "IATA_CODE")) %>% na.omit()
+map2<-leaflet(combinedSecDelay) %>% addProviderTiles(providers$CartoDB.DarkMatter) %>%
+  addHeatmap(lng=~LONGITUDE, lat=~LATITUDE, intensity = ~delayPercentage, blur = 15, radius = 8)
+
+```
+
+## Heatmap of airports with intensities based on the percentage of security delays
+
+```{r}
+map2
+```
+
+```{r}
+# Heatmap of airports with intensities based on the number of outbound flights in total
+options("viewer" = function(url, ...) utils::browseURL(url))
+# combinedSecDelay <- combinedSecDelay %>% inner_join(airports, by = c("ORIGIN_AIRPORT" = "IATA_CODE")) %>% na.omit()
+map3<-leaflet(combinedSecDelay) %>% addProviderTiles(providers$CartoDB.DarkMatter) %>%
+  addHeatmap(lng=~LONGITUDE, lat=~LATITUDE, intensity = ~numOfFlights*1000, blur = 15, radius = 8)
+
+```
+
+## Heatmap of airports with intensities based on the number of outbound flights in total
+
+```{r}
+map3
+```
+
+# Extra Question: 
+## Which routes should we avoid when travelling?
+### Approach for our answer: We should avoid routes with the highest frequency of delays
+```{r}
+library(dplyr)
+library(geosphere)
+library(leaflet)
+
+routesDelay <- na.omit(flights) %>% filter(ARRIVAL_DELAY > 0) 
+routesDelay <- routesDelay[,c("ORIGIN_AIRPORT", "DESTINATION_AIRPORT", "ARRIVAL_DELAY")] %>% group_by(ORIGIN_AIRPORT,DESTINATION_AIRPORT) %>% summarise(delayCount = n())
+
+routesDelay <- routesDelay[136:1674,]
+
+routesTotal <- na.omit(flights)
+routesTotal <- routesTotal[,c("ORIGIN_AIRPORT", "DESTINATION_AIRPORT", "ARRIVAL_DELAY")] %>% group_by(ORIGIN_AIRPORT,DESTINATION_AIRPORT) %>% summarise(count = n())
+routesTotal <- routesTotal[3780:8281,]
+
+combinedRoutes <- inner_join(routesDelay, routesTotal)
+combinedRoutes <- mutate(combinedRoutes, percentageOfDelay = round((delayCount/count)*100, digits = 1))
+topDelayedRoutes <- combinedRoutes %>% arrange(desc(percentageOfDelay))
+
+# Since the top 10 most frequently delayed routes at this point had less than 10 flights in the entire year, the data will likely be inaccurate due to the small sample size and insignificant as these are likely unpopular routes.
+
+# Hence, we decided to filter routes with only more than 12 flights (on average 1 flight per month)
+
+topDelayedRoutes <- topDelayedRoutes %>% filter(count >= 12) %>% head(10)
+```
+
+## Table of the top 10 most delayed flight routes
+```{r}
+topDelayedRoutes
+```
+
+```{r}
+topDelayedRoutes <- inner_join(topDelayedRoutes, airports, by= c("ORIGIN_AIRPORT" = "IATA_CODE"))
+topDelayedRoutes <- inner_join(topDelayedRoutes, airports, by= c("DESTINATION_AIRPORT" = "IATA_CODE"))
+
+topDelayedRoutesPlot <-gcIntermediate(as.matrix(topDelayedRoutes[,c("LONGITUDE.x", "LATITUDE.x")]),
+                        as.matrix(topDelayedRoutes[,c("LONGITUDE.y", "LATITUDE.y")]),
+                        n=100,
+                        addStartEnd=TRUE,
+                        sp=TRUE,
+                        breakAtDateLine=FALSE) %>% leaflet() %>% addTiles() %>% addPolylines(weight = 1, opacity = 0.8, color = "#820a0a") %>% addCircleMarkers(data = topDelayedRoutes, lat = ~LATITUDE.x, lng = ~LONGITUDE.x, popup = ~AIRPORT.x, radius = 0.5) %>% addCircleMarkers(data = topDelayedRoutes, lat = ~LATITUDE.y, lng = ~LONGITUDE.y, popup = ~AIRPORT.y, radius = 0.5)
+
+```
+
+## Plot of the top 10 most frequently delayed flight routes (click on circle markers to view airport names)
+```{r}
+topDelayedRoutesPlot
+```

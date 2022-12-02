@@ -1,0 +1,258 @@
+---
+title: "DBA3702 Assignment 3"
+output: html_document
+date: "2 Sept 2021"
+---
+# Question 1
+## Part 1
+``` {r}
+
+library(dplyr)
+library(rvest)
+library(stringr)
+
+url <- "https://coronavirus.jhu.edu/data/mortality"
+raw.data <- read_html(url) %>% html_table() %>% as.data.frame()
+countries.raw <- read.csv("./Countries.csv")
+
+# Part 1
+countries.raw$Country <- countries.raw$Country %>% str_replace_all("&", "and")
+countries.raw[167,"Country"] <- "United States"
+countries.raw[58,"Country"] <- "United Kingdom"
+countries.raw[33,"Country"] <- "Côte d'Ivoire"
+countries.raw[106,"Country"] <- "North Macedonia"
+countries.raw[169,"Country"] <- "St. Vincent and the Grenadines"
+countries.raw[35, "Country"] <- "Democratic Republic of the Congo"
+countries.raw[36, "Country"] <- "Republic of the Congo"
+countries.raw[109, "Country"] <- "Myanmar"
+countries.raw[147, "Country"] <- "Sao Tome and Principe"
+countries.raw[95,"Country"] <- "Saint Lucia"
+
+#countries.raw[35, c("Population", "GDP_Per_Capita","Life_Expectancy")] <- countries.raw[35, c("Population", "GDP_Per_Capita","Life_Expectancy")] + countries.raw[36, c("Population", "GDP_Per_Capita","Life_Expectancy")]
+#countries.raw <- countries.raw[-c(36),]
+
+combined.data <- full_join(raw.data, countries.raw, by = "Country", keep = F, copy = F)
+head(combined.data)
+
+```
+
+## Part 2
+
+```{r}
+#combined.data$Population <- ifelse(is.na(combined.data$Population), 0, combined.data$Population )
+
+combined.data$Confirmed <- gsub(",", "", combined.data$Confirmed)
+combined.data$Population <- gsub(",", "", combined.data$Population)
+combined.data <- mutate(combined.data, confirmed.100k = round(as.numeric(Confirmed) / as.numeric(Population) * 100000
+                                                              , digits = 2))
+head(combined.data)
+```
+
+## Part 3
+
+```{r}
+# Part 3
+
+continents <- read_html("https://github.com/dbouquin/IS_608/blob/master/NanosatDB_munging/Countries-Continents.csv")  %>% html_table() %>% as.data.frame()
+names(continents) <- continents[1,]
+continents <- continents[-1,-1]
+
+continents[168,"Country"] <- "United States"
+continents[126, "Country"] <- "North Macedonia"
+continents[166,"Country"] <- "St. Vincent and the Grenadines"
+continents[13, "Country"] <- "Democratic Republic of the Congo"
+continents[12, "Country"] <- "Republic of the Congo"
+continents[60, "Country"] <- "Myanmar"
+continents[110, "Country"] <- "Czechia"
+continents[5, "Country"] <- "Burkina Faso"
+continents[73, "Country"] <- "South Korea"
+continents[63, "Country"] <- "Timor-Leste"
+continents[86, "Country"] <- "Russia"
+
+combined.continents <- full_join(combined.data, continents, by = "Country", keep = F, copy = F)
+combined.continents[166, "Continent"] <- "Africa"
+combined.continents[48,"Continent"] <- "Europe"
+combined.continents.clean <- combined.continents[complete.cases(combined.continents),]
+aggr.combined <- aggregate(confirmed.100k ~ Continent , combined.continents.clean, mean)
+aggr.combined[which.max(aggr.combined$confirmed.100k),]
+head(combined.continents.clean)
+
+```
+# Question 2
+
+```{r}
+
+vax.data.raw <- read.csv("./country_vaccinations.csv")
+
+# handle missing country code
+library(dplyr)
+vax.data.clean <- vax.data.raw
+vax.data.clean$iso_code <- ifelse(vax.data.clean$iso_code == "" | vax.data.clean$iso_code == " "
+                                  , ifelse(vax.data.clean$country == "England", "GB-ENG"
+                                           ,ifelse(vax.data.clean$country == "Northern Ireland", "GB-NIR"
+                                                   ,ifelse(vax.data.clean$country == "Scotland", "GB-SCT"
+                                                           ,ifelse(vax.data.clean$country == "Wales", "GB-WLS", ""))))
+                                  , vax.data.clean$iso_code)
+
+#temp <- filter(vax.data.clean, iso_code == " " | iso_code == "") # used to check if all entries have country code
+
+vax.data.clean.spare <- vax.data.clean
+
+vax.data.clean$Pfizer_BioNTech <- 0
+vax.data.clean$Sputnik_V <- 0
+vax.data.clean$Oxford_AstraZeneca <- 0
+vax.data.clean$Moderna <- 0
+
+tempPeople_fully_vaccinated <- 0
+tempCountry <- ""
+
+for (row in 1:nrow(vax.data.clean)) {
+  tempDailyVax <- vax.data.clean[row,"daily_vaccinations"]
+  tempDailyVax.raw <- vax.data.clean[row,"daily_vaccinations_raw"]
+  tempTotalVax <- vax.data.clean[row, "total_vaccinations"]
+
+  # missing daily vaccination data will be indicated as 0
+  if(is.na(tempDailyVax)) {
+    #print("daily vax empty")
+    vax.data.clean[row,"daily_vaccinations"] <- 0
+  }
+  
+  # missing daily vaccination raw data will be indicated as 0
+  if(is.na(tempDailyVax.raw)) {
+    #print("daily vax raw empty")
+    vax.data.clean[row,"daily_vaccinations_raw"] <- vax.data.clean[row,"daily_vaccinations"]
+  }
+  
+  # handle missing total_vaccination data by adding daily vax number with total vax of previous day
+  if(row > 1) {
+      if(is.na(tempTotalVax)) {
+        vax.data.clean[row, "total_vaccinations"] <- as.integer(vax.data.clean[row - 1, "total_vaccinations"]) + as.integer(vax.data.clean[row, "daily_vaccinations"])
+      } else {
+        # if total_vaccination data is present, check if it is lesser than total vax in the previous row
+        # if lesser, daily vaccination will be updated with a negative value to signify a data correction (as explained in lecture)
+        if(vax.data.clean[row, "total_vaccinations"] <= vax.data.clean[row - 1, "total_vaccinations"] 
+           & vax.data.clean[row, "country"] ==  vax.data.clean[row - 1, "country"]) {
+          vax.data.clean[row,"daily_vaccinations"] <- vax.data.clean[row, "total_vaccinations"] - vax.data.clean[row - 1, "total_vaccinations"]
+        }
+      }
+  } else {
+    vax.data.clean[row, "total_vaccinations"] <- as.integer(vax.data.clean[row, "daily_vaccinations"])
+  }
+
+  # replace vaccine col with individual cols for each type of vaccine
+  if(grepl("Moderna", vax.data.clean[row, "vaccines"])) {
+    vax.data.clean[row, "Moderna"] <- 1
+    
+  }
+  
+  if(grepl("Pfizer/BioNTech", vax.data.clean[row, "vaccines"])) {
+    vax.data.clean[row, "Pfizer_BioNTech"] <- 1
+  } 
+  
+  if(grepl("Sputnik V", vax.data.clean[row, "vaccines"])) {
+    vax.data.clean[row, "Sputnik_V"] <- 1
+  } 
+  
+  if(grepl("Oxford/AstraZeneca", vax.data.clean[row, "vaccines"])) {
+    vax.data.clean[row, "Oxford_AstraZeneca"] <- 1
+  } 
+  
+  
+  # handle missing full vaccinated values
+  if(is.na(vax.data.clean[row, "people_fully_vaccinated"])) {
+    if(vax.data.clean[row, "country"] == tempCountry) {
+      vax.data.clean[row, "people_fully_vaccinated"] <- tempPeople_fully_vaccinated
+    } else {
+      tempPeople_fully_vaccinated <- 0
+      tempCountry <- vax.data.clean[row, "country"]
+      vax.data.clean[row, "people_fully_vaccinated"] <- tempPeople_fully_vaccinated
+    }
+  } else {
+    tempPeople_fully_vaccinated <- vax.data.clean[row, "people_fully_vaccinated"]
+  }
+      # handle missing people vaccinated
+  if(is.na(vax.data.clean[row, "people_vaccinated"])) {
+    if(is.na(vax.data.clean[row, "people_fully_vaccinated"])) {
+      vax.data.clean[row, "people_vaccinated"] <- vax.data.clean[row, "total_vaccinations"]
+    } else {
+      vax.data.clean[row, "people_vaccinated"] <- vax.data.clean[row, "total_vaccinations"] - vax.data.clean[row, "people_fully_vaccinated"]
+    }
+  }
+  
+  if(!is.na(vax.data.clean[row, "total_vaccinations"]) & !is.na(vax.data.clean[row, "people_vaccinated"])) {
+      vax.data.clean[row, "people_fully_vaccinated"] <- vax.data.clean[row, "total_vaccinations"] - vax.data.clean[row, "people_vaccinated"]
+      tempPeople_fully_vaccinated <- vax.data.clean[row, "people_fully_vaccinated"]
+  }
+
+}
+
+vax.data.clean <- vax.data.clean[,-13]
+head(vax.data.clean, n = 20)
+
+
+```
+
+# Question 3
+
+```{r}
+library(rvest)
+library(tidyverse)
+library(stringr)
+library(curl)
+library(XML)
+
+
+urls <- paste("https://www.srx.com.sg/singapore-property-listings/property-for-sale?page=", 1:1777, sep="")
+
+all_names <- c()
+all_descriptions <- c()
+all_types <- c()
+all_prices <- c()
+all_sizes <- c()
+all_agents <- c()
+all_listing_urls <- c()
+
+for (i in 1:5) { #should be i in 1:length(urls) but it takes too long to get that much data so i just get the first 100
+  
+  url <-urls[i]
+  html <- read_html(url)
+
+  names <- html_text(html_nodes(html, ".listingDetailTitle .notranslate"))[seq(from=1, to=40, by=2)]
+  all_names <- c(all_names, names)
+  
+  descriptions <- html_text(html_nodes(html, ".listingDetailAgentAgencyText"))
+  descriptions <- gsub('[\r\n\t]', '', descriptions)
+  descriptions <- str_trim(descriptions)
+  all_descriptions <- c(all_descriptions, descriptions)
+  
+  types <- html_text(html_nodes(html, ".listingDetailType"))
+  types <- gsub('[\r\n\t]', '', types)
+  types <- str_trim(types)
+  all_types <- c(all_types, types)
+  
+  prices <- html_text(html_nodes(html, ".adjusted-line-height"))
+  prices <- gsub('[\r\n\t]', '', prices)
+  prices <- str_trim(prices)
+  all_prices <- c(all_prices, prices)
+  
+  sizes <- html_text(html_nodes(html, ".listingDetailValues"))
+  sizes <- gsub('[\r\n\t]', '', sizes)
+  sizes <- str_trim(sizes)
+  all_sizes <- c(all_sizes, sizes)
+  
+  agents <- html_text(html_nodes(html, ".listingDetailAgentName"))
+  all_agents <- c(all_agents, agents)
+  
+  listing_urls <- paste("https://www.srx.com.sg", html_attr(html_nodes(html, ".listingPhoto"), "href"), sep="")
+  all_listing_urls <- c(all_listing_urls, listing_urls)
+  
+}
+
+srx_df <- data.frame(all_names, all_descriptions, all_types, all_prices, all_sizes, all_agents, all_listing_urls)
+as_tibble(srx_df)
+```
+
+
+
+
+

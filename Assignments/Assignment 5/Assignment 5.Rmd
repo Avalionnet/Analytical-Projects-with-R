@@ -1,0 +1,74 @@
+---
+title: "DBA3702 Assignment 5"
+output: html_document
+date: "16 Sept 2021"
+---
+# Question 1
+### Method 1 (based on probability calculation) : Chance of winning is 2.41%
+```{r}
+probabilityMultiplier <- function(iter, numerator, denom){
+  if(iter <= 0) {
+    return(1)
+  }
+  return((numerator/denom)*probabilityMultiplier(iter-1, numerator - 1, denom))
+}
+
+winningChance <- probabilityMultiplier(30,365,365) * (30/365)
+print(winningChance*100)
+
+```
+
+### Method 2: Based on Simulation 
+#### Assumption: 
+- To limit the scope of our simulation, we assume that no one is born on a leap year in the queue.
+- We assume that for each simulation run, everyone's birthday will be randomized regardless of their Q position and will be independent of the next simulation run.
+
+```{r}
+# The winRound method simulates 1 iteration, and returns the result of whether you won the round based on your position denoted by numInQ
+
+# For eg. if you are in position 5, this method checks if someone with a smaller Q position before you won and returns false should this happen. If not, it checks whether position numInQ won. If position numInQ wins the method returns True. Otherwise, it returns false and ignores the people in positions after numInQ.
+
+
+winRound <- function(iter, numInQ){
+  bdays <- c(0)
+  counter <- 1
+  
+  while (counter <= numInQ){
+    currentBday <- sample(1:365, 1, replace = T)
+    if (currentBday %in% bdays & counter != numInQ){
+      return(FALSE)
+    } 
+    if (currentBday %in% bdays & counter == numInQ){
+      return(TRUE)
+    }
+    bdays <- c(bdays, currentBday) 
+    counter <- counter + 1
+  }
+  return(FALSE)
+}
+
+chanceOfQPosition <- function(numOfPpl, numOfIter) {
+  results <- data.frame(iter = 1:numOfIter, winner = sapply(1:numOfIter, winRound, numOfPpl))
+  chance <- mean(results$winner)
+  return(chance)
+}
+
+chanceFor31stPos <- toString(chanceOfQPosition(31, 10000) * 100)
+print(paste("Chance of winning as the 31st person in the Queue: ",chanceFor31stPos,"%", sep = ""))
+```
+
+# Question 2
+
+### Answer reflected in last code block as Q.Position
+
+```{r}
+
+numOfIter <- 10000
+numOfPpl <- 31
+positionProbability <- data.frame(Q.Position = 2:numOfPpl, chance = sapply(2:numOfPpl, chanceOfQPosition, numOfIter))
+positionProbability
+positionProbability[positionProbability$chance == max(positionProbability$chance),]
+
+```
+
+
